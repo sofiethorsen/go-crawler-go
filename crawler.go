@@ -10,7 +10,14 @@ import (
     "strings"
 )
 
-func crawl(re *regexp.Regexp, url string) {
+type Crawler struct {
+
+    baseUrl string
+
+    regex *regexp.Regexp
+}
+
+func (crawler *Crawler) crawl(url string) {
     response, error := http.Get(url)
     
     if error != nil {
@@ -21,15 +28,15 @@ func crawl(re *regexp.Regexp, url string) {
             fmt.Println("Failed to read response body, error: ", error)
         } else {
             strBody := string(body)
-            extractUrls(re, url, strBody)
+            crawler.extractUrls(url, strBody)
         }
 
         response.Body.Close()
     }
 }
 
-func extractUrls(regex *regexp.Regexp, currentUrl, body string) {
-    newUrls := regex.FindAllStringSubmatch(body, -1)
+func (crawler *Crawler) extractUrls(currentUrl, body string) {
+    newUrls := crawler.regex.FindAllStringSubmatch(body, -1)
     
     // TODO: create a proper filter
     baseUrl, _ := url.Parse(currentUrl)
@@ -61,6 +68,12 @@ func extractUrls(regex *regexp.Regexp, currentUrl, body string) {
 func main() {
     startUrl := os.Args[1]
     // TODO: look at alternative regexes
-    domainRegex := regexp.MustCompile("(?s)<a[ t]+.*?href=\"(http.*?)\".*?>.*?</a>")
-    crawl(domainRegex, startUrl)
+    regex := regexp.MustCompile("(?s)<a[ t]+.*?href=\"(http.*?)\".*?>.*?</a>")
+
+    crawler := Crawler {
+        startUrl,
+        regex,
+    }
+
+    crawler.crawl(startUrl)
 }
