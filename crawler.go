@@ -1,6 +1,7 @@
 package main
 
 import (
+    "bytes"
     "fmt"
     "io/ioutil"
     "net/http"
@@ -10,6 +11,7 @@ import (
     "strings"
 )
 
+var builder bytes.Buffer
 var visited = make(map[string]bool)
 
 type Crawler struct {
@@ -20,17 +22,23 @@ type Crawler struct {
 
     regex *regexp.Regexp
 
-    queue chan string
+    assetRegex *regexp.Regexp
 }
 
-func (crawler *Crawler) run() {
-    go func() { 
-        crawler.queue <- crawler.startUrl
-    }()
+type Page struct {
+    location string
 
-    for url := range crawler.queue {
-        crawler.crawl(url)
-    }
+    links []string
+
+    assets []*url.URL
+}
+
+func (crawler *Crawler) run() string {
+    buildStart()
+    crawler.crawl(crawler.startUrl)
+    buildEnd()
+
+    return builder.String()
 }
 
 func (crawler *Crawler) crawl(currentUrl string) {
@@ -44,16 +52,22 @@ func (crawler *Crawler) crawl(currentUrl string) {
         if error != nil {
             fmt.Println("Failed to read response body, error: ", error)
         } else {
-            strBody := string(body)
-            crawler.extractUrls(currentUrl, strBody)
+            urls := crawler.extractUrls(currentUrl, string(body))
+            for _, url := range urls {
+                crawler.crawl(url)
+            }
         }
 
         response.Body.Close()
     }
 }
 
-func (crawler *Crawler) extractUrls(stringUrl, body string) {
+func (crawler *Crawler) extractUrls(stringUrl, body string) []string {
+    urls := make([]string, 0)
+
     newUrls := crawler.regex.FindAllStringSubmatch(body, -1)
+    pageAssets := crawler.assetRegex.FindAllStringSubmatch(body, -1)
+
     currentUrl, _ := url.Parse(stringUrl)
 
     if newUrls != nil {
@@ -61,12 +75,22 @@ func (crawler *Crawler) extractUrls(stringUrl, body string) {
 
         for _, newUrl := range parsedUrls { 
             if shouldVisit(newUrl, crawler.host) {
-                go func(url string) {
-                    crawler.queue <- url
-                } (newUrl.String())
+                urls = append(urls, newUrl.String())
             }
         }
+
+        parsedAssets := parseUrls(pageAssets, currentUrl)
+
+        page := Page {
+            stringUrl,
+            urls,
+            parsedAssets,
+        };
+
+        addPageToSiteMap(page)
     }
+
+    return urls
 }
 
 func shouldVisit(url *url.URL, startHost string) bool {
@@ -112,9 +136,49 @@ func getNormalizedHost(host string) string {
     return strings.Join(parts[len(parts) - 2:], ".")
 }
 
+// helper methods to build the sitemap
+func buildStart() {
+    builder.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+    builder.WriteString("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n")
+}
+
+func buildEnd() {
+    builder.WriteString("</urlset>")
+}
+
+func addPageToSiteMap(page Page) {
+    builder.WriteString("  <url>\n")
+
+    // add location
+    builder.WriteString("    <loc>")
+    builder.WriteString(page.location)
+    builder.WriteString("</loc>\n")
+
+    // add links
+    builder.WriteString("    <links:links>\n")
+    for _, link := range page.links {
+        builder.WriteString("      <link>")
+        builder.WriteString(link)
+        builder.WriteString("</link>\n")
+    }
+    builder.WriteString("    </links:link>\n")
+
+    //add assets
+    builder.WriteString("    <assets>\n")
+    for _, asset := range page.assets {
+        builder.WriteString("      <asset>")
+        builder.WriteString(asset.String())
+        builder.WriteString("</asset>\n")
+    }
+    builder.WriteString("    </assets>\n")
+
+    builder.WriteString("  </url>\n")
+}
+
 func main() {
     startUrl := os.Args[1]
     regex := regexp.MustCompile("<a.*?href=\"([^\"]*)\".*?>")
+    assetRegex := regexp.MustCompile("<link.*?href=\"([^\"]*)\".*?>")
 
     u, _ := url.Parse(startUrl)
     host := getNormalizedHost(u.Host)
@@ -123,8 +187,8 @@ func main() {
         startUrl,
         host,
         regex,
-        make(chan string),
+        assetRegex,
     };
 
-    crawler.run()
+    fmt.Printf(crawler.run())
 }
