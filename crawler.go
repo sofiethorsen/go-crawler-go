@@ -10,70 +10,121 @@ import (
     "strings"
 )
 
+var visited = make(map[string]bool)
+
 type Crawler struct {
 
-    baseUrl string
+    startUrl string
+
+    host string
 
     regex *regexp.Regexp
+
+    queue chan string
 }
 
-func (crawler *Crawler) crawl(url string) {
-    response, error := http.Get(url)
+func (crawler *Crawler) run() {
+    go func() { 
+        crawler.queue <- crawler.startUrl
+    }()
+
+    for url := range crawler.queue {
+        crawler.crawl(url)
+    }
+}
+
+func (crawler *Crawler) crawl(currentUrl string) {
+    response, error := http.Get(currentUrl)
     
     if error != nil {
-        fmt.Println("Failed GET to: ", url, " error: ", error)
+        fmt.Println("Failed GET to: ", currentUrl, " error: ", error)
     } else {
+        fmt.Println("Fetching: ", currentUrl)
         body, error := ioutil.ReadAll(response.Body)
         if error != nil {
             fmt.Println("Failed to read response body, error: ", error)
         } else {
             strBody := string(body)
-            crawler.extractUrls(url, strBody)
+            crawler.extractUrls(currentUrl, strBody)
         }
 
         response.Body.Close()
     }
 }
 
-func (crawler *Crawler) extractUrls(currentUrl, body string) {
+func (crawler *Crawler) extractUrls(stringUrl, body string) {
     newUrls := crawler.regex.FindAllStringSubmatch(body, -1)
-    
-    // TODO: create a proper filter
-    baseUrl, _ := url.Parse(currentUrl)
-    parts := strings.Split(baseUrl.Host, ".")
-    baseUrlHost := parts[1] + "." + parts[2]
-    
-    u := ""
+    currentUrl, _ := url.Parse(stringUrl)
+
     if newUrls != nil {
-        for _, z := range newUrls {
-            u = z[1]
-            ur, err := url.Parse(z[1])
-            if err == nil && ur.Host == baseUrlHost {
-                if ur.IsAbs() == true {
-                    fmt.Println(u)
-                } else if ur.IsAbs() == false {
-                    fmt.Println(baseUrl.ResolveReference(ur).String())
-                } else if strings.HasPrefix(u, "//") {
-                    fmt.Println("http:" + u)
-                } else if strings.HasPrefix(u, "/") {
-                    fmt.Println(baseUrl.Host + u)
-                } else {
-                    fmt.Println(currentUrl + u)
-                }
+        parsedUrls := parseUrls(newUrls, currentUrl)
+
+        for _, newUrl := range parsedUrls { 
+            if shouldVisit(newUrl, crawler.host) {
+                go func(url string) {
+                    crawler.queue <- url
+                } (newUrl.String())
             }
         }
     }
 }
 
+func shouldVisit(url *url.URL, startHost string) bool {
+    newUrlHost := getNormalizedHost(url.Host)
+    shouldVisit := newUrlHost == startHost && !visited[url.String()]
+    visited[url.String()] = true
+    return shouldVisit
+}
+
+func parseUrls(rawUrls [][]string, currentUrl *url.URL) []*url.URL {
+    urls := make([]*url.URL, 0)
+
+    for _, raw := range rawUrls {
+        stringUrl := raw[1];
+        newUrl, error := url.Parse(stringUrl)
+        if error != nil {
+            continue
+        }
+
+        newUrl = makeAbsolute(currentUrl, newUrl)
+        if (isValidUrl(newUrl)) {
+            urls = append(urls, newUrl)
+        }
+    }
+
+    return urls
+}
+
+func isValidUrl(url *url.URL) bool {
+    return url.Host != ""
+}
+
+func makeAbsolute(currentUrl, u *url.URL) *url.URL {
+    if !u.IsAbs() {
+        return currentUrl.ResolveReference(u)
+    }
+
+    return u
+}
+
+func getNormalizedHost(host string) string {
+    parts := strings.Split(host, ".")
+    return strings.Join(parts[len(parts) - 2:], ".")
+}
+
 func main() {
     startUrl := os.Args[1]
-    // TODO: look at alternative regexes
-    regex := regexp.MustCompile("(?s)<a[ t]+.*?href=\"(http.*?)\".*?>.*?</a>")
+    regex := regexp.MustCompile("<a.*?href=\"([^\"]*)\".*?>")
+
+    u, _ := url.Parse(startUrl)
+    host := getNormalizedHost(u.Host)
 
     crawler := Crawler {
         startUrl,
+        host,
         regex,
-    }
+        make(chan string),
+    };
 
-    crawler.crawl(startUrl)
+    crawler.run()
 }
