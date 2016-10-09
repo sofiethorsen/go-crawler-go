@@ -2,6 +2,7 @@ package main
 
 import (
     "bytes"
+    "flag"
     "fmt"
     "io/ioutil"
     "net/http"
@@ -204,12 +205,25 @@ func logError(message string, err error) {
 }
 
 func main() {
-    startUrl := os.Args[1]
+    flag.Parse()
+
+    args := flag.Args()
+    if len(args) < 1 {
+        fmt.Println("Please specify start page")
+        os.Exit(1)
+    }
+
+    startUrl := args[0]
+    url, error := url.Parse(startUrl)
+
+    if error != nil || !url.IsAbs() {
+        fmt.Println("Please provide valid URL")
+        os.Exit(1)        
+    }
+
+    host := getNormalizedHost(url.Host)
     urlRegex := regexp.MustCompile("<a.*?href=\"([^\"]*)\".*?>")
     assetRegex := regexp.MustCompile("<link.*?href=\"([^\"]*)\".*?>")
-
-    url, _ := url.Parse(startUrl)
-    host := getNormalizedHost(url.Host)
 
     crawler := Crawler {
         url,
