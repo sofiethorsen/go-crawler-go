@@ -11,6 +11,9 @@ import (
     "strings"
 )
 
+
+const Indent = "  "
+
 var builder bytes.Buffer
 var visited = make(map[string]bool)
 
@@ -27,19 +30,27 @@ type Page struct {
     assets []*url.URL
 }
 
+func (crawler *Crawler) run() string {
+    buildStart()
+    crawler.crawl(crawler.startUrl)
+    buildEnd()
+
+    return builder.String()
+}
+
 func (crawler *Crawler) crawl(url *url.URL) {
     response, error := http.Get(url.String())
     
     if error != nil {
-        fmt.Println("Failed GET to:", url, "exiting. Error: was", error)
+        logError("Failed GET to: " + url.String(), error)
         return
     }
 
-    fmt.Println("Fetching:", url)
+    log("Fetching: " + url.String())
 
     body, error := ioutil.ReadAll(response.Body)
     if error != nil {
-        fmt.Println("Failed to read response body, exiting. Error was: ", error)
+        logError("Failed to read response body", error)
         return
     }
 
@@ -62,8 +73,8 @@ func (crawler *Crawler) getUrlsFromBody(parentUrl *url.URL, body string) []*url.
 
         for _, subUrl := range parsedUrls { 
             if shouldVisit(subUrl, crawler.host) {
-                visited[subUrl.String()] = true
                 subUrls = append(subUrls, subUrl)
+                visited[subUrl.String()] = true
             }
         }
 
@@ -102,7 +113,7 @@ func parseUrls(rawUrls []string, currentUrl *url.URL) []*url.URL {
         newUrl, _ := url.Parse(raw)
         newUrl = makeAbsolute(currentUrl, newUrl)
         
-        if (isValidUrl(newUrl)) {
+        if isValidUrl(newUrl) {
             urls = append(urls, newUrl)
         }
     }
@@ -138,41 +149,58 @@ func buildEnd() {
 }
 
 func addPageToSiteMap(page Page) {
-    builder.WriteString("  <url>\n")
+    builder.WriteString(indent(1))
+    builder.WriteString("<url>")
+    builder.WriteString("\n")
 
     // add location
-    builder.WriteString("    <loc>")
-    builder.WriteString(page.location.String())
-    builder.WriteString("</loc>\n")
-
+    buildLocationSection(page.location.String())
     // add links
-    builder.WriteString("    <links:links>\n")
-    buildTagSection("link", page.links)
-    builder.WriteString("    </links:link>\n")
+    buildTagSection("links:link", "link", page.links)
+    // add assets
+    buildTagSection("assets", "asset", page.assets)
 
-    //add assets
-    builder.WriteString("    <assets>\n")
-    buildTagSection("asset", page.assets)
-    builder.WriteString("    </assets>\n")
-
-    builder.WriteString("  </url>\n")
+    builder.WriteString(indent(1))
+    builder.WriteString("</url>")
+    builder.WriteString("\n")
 }
 
-func buildTagSection(tag string, content []*url.URL) {
-    builder.WriteString("    <" + tag + ">\n")
+func buildTagSection(section, tag string, content []*url.URL) {
+    builder.WriteString(indent(2))
+    builder.WriteString("<" + section + ">")
+    builder.WriteString("\n")
+
     for _, info := range content {
-        builder.WriteString("      <" + tag + ">")
+        builder.WriteString(indent(3))
+        builder.WriteString("<" + tag + ">")
         builder.WriteString(info.String())
-        builder.WriteString("</" + tag + ">\n")
-    }   
+        builder.WriteString("</" + tag + ">")
+        builder.WriteString("\n")
+    }
+
+    builder.WriteString(indent(2))
+    builder.WriteString("</" + section + ">")
+    builder.WriteString("\n")
 }
 
-func (crawler *Crawler) run() string {
-    buildStart()
-    crawler.crawl(crawler.startUrl)
-    buildEnd()
+func buildLocationSection(location string) {
+    builder.WriteString(indent(2))
+    builder.WriteString("<loc>")
+    builder.WriteString(location)
+    builder.WriteString("</loc>")
+    builder.WriteString("\n")
+}
 
-    return builder.String()
+func indent(count int) string {
+    return strings.Repeat(Indent, count)
+}
+
+func log(message string) {
+    fmt.Fprintln(os.Stderr, message)
+}
+
+func logError(message string, err error) {
+    fmt.Fprintln(os.Stderr, message, "Error was:", err)
 }
 
 func main() {
